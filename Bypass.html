@@ -90,6 +90,21 @@ button{cursor:pointer}
       <div class="info"><b>SFL BYPASS</b><small>Bypass Link • Fast</small></div>
       <div class="arrow">›</div>
     </div>
+    <div class="service" style="--accent:#a855f7" data-type="bicolink">
+      <div class="icon">≡★</div>
+      <div class="info"><b>BICOLINK BYPASS</b><small>Bypass Link • Fast</small></div>
+      <div class="arrow">›</div>
+    </div>
+    <div class="service" style="--accent:#38bdf8" data-type="linkvertise">
+      <div class="icon">≡★</div>
+      <div class="info"><b>LINKVERTISE BYPASS</b><small>Bypass Link • Fast</small></div>
+      <div class="arrow">›</div>
+    </div>
+    <div class="service" style="--accent:#22c55e" data-type="demon">
+      <div class="icon">≡★</div>
+      <div class="info"><b>DEMONBYPASS</b><small>Key System • Fast</small></div>
+      <div class="arrow">›</div>
+    </div>
   </section>
 
   <footer>
@@ -134,10 +149,14 @@ button{cursor:pointer}
 <div class="toast" id="toast">Berhasil</div>
 
 <script>
-const API_KEY = 'DO2Wa';
+// API key disimpan di Vercel, bukan di HTML publik.
+const PROXY_URL = 'https://bypass-proxy.vercel.app/api/bypass';
 const ENDPOINTS = {
-  adlink: 'https://api.theresav.eu/api/bypass/adlinksumo',
-  sfl: 'https://api.theresav.eu/api/bypass/sfl'
+  adlink: 'adlink',
+  sfl: 'sfl',
+  bicolink: 'bicolink',
+  linkvertise: 'linkvertise',
+  demon: 'delta'
 };
 let currentType = "adlink";
 let resultLink = "";
@@ -155,8 +174,22 @@ function debug(text){ $("debugBody").textContent = text; }
 document.querySelectorAll(".service").forEach(card => {
   card.addEventListener("click", () => {
     currentType = card.dataset.type;
-    $("modalTitle").textContent = currentType === "sfl" ? "SFL Bypass" : "AdLinkSumo Bypass";
-    $("url").placeholder = currentType === "sfl" ? "Tempel link SFL di sini" : "Tempel link AdLinkSumo di sini";
+    const names = {
+      adlink: "AdLinkSumo Bypass",
+      sfl: "SFL Bypass",
+      bicolink: "Bicolink Bypass",
+      linkvertise: "Linkvertise Bypass",
+      demon: "DemonBypass"
+    };
+    const placeholders = {
+      adlink: "Tempel link AdLinkSumo di sini",
+      sfl: "Tempel link SFL di sini",
+      bicolink: "Tempel link Bicolink di sini",
+      linkvertise: "Tempel link Linkvertise di sini",
+      demon: "Tempel link DemonBypass di sini"
+    };
+    $("modalTitle").textContent = names[currentType];
+    $("url").placeholder = placeholders[currentType];
     $("url").value = "";
     $("result").style.display = "none";
     debug("Menunggu request...");
@@ -240,49 +273,118 @@ async function bypass(){
 
   $("loader").style.display = "block";
   $("result").style.display = "none";
-  debug("Mengirim request...");
+  debug("Mengirim request melalui proxy...");
   const start = performance.now();
 
   try {
-    const res = await fetch(
-      ENDPOINTS[currentType] + "?url=" + encodeURIComponent(url),
-      {headers: {"x-apikey": API_KEY}}
-    );
+    const endpoint = ENDPOINTS[currentType];
+    const requestUrl =
+      PROXY_URL + "?type=" + encodeURIComponent(endpoint) +
+      "&url=" + encodeURIComponent(url);
 
-    if(res.status === 429) throw new Error("HTTP 429 - Too Many Requests");
-    if(res.status === 502) throw new Error("HTTP 502 - Server API sedang sibuk");
-    if(res.status === 401) throw new Error("HTTP 401 - API Key tidak valid");
-    if(!res.ok) throw new Error("HTTP " + res.status);
+    // SFL/AdLinkSumo melalui Vercel proxy agar browser/WebView tidak
+    // perlu mengirim API key langsung ke Theresav.
+    const res = await fetch(requestUrl, { method: "GET" });
 
-    const json = await res.json();
-    const elapsed = Math.round(performance.now() - start);
-    debug(JSON.stringify({status:res.status, ok:res.ok, responseTime:elapsed+" ms", json}, null, 2));
+    const contentType = res.headers.get("content-type") || "";
+    let json = null;
+    let raw = "";
 
-    // Kedua API memiliki format respons berbeda:
-    // AdLinkSumo: success + url
-    // SFL: status + bypassed_url
-    const success = currentType === "sfl" ? !!json.status : !!json.success;
-    const bypassed = currentType === "sfl" ? json.bypassed_url : json.url;
-
-    if(!success || !bypassed) {
-      throw new Error(json.error || "Request gagal");
+    // Baca body mentah terlebih dahulu supaya error 400/401/403/429
+    // dari server tidak hilang.
+    try {
+      raw = (await res.text()).trim();
+    } catch(e) {
+      raw = "";
     }
 
-    $("original").textContent = json.original_url || url;
-    $("bypassed").textContent = bypassed || "-";
-    $("creator").textContent = json.creator || "-";
-    $("time").textContent = (json.execution_time_ms ?? "-") + " ms";
+    if(raw) {
+      try { json = JSON.parse(raw); } catch(e) {}
+    }
+
+    const elapsed = Math.round(performance.now() - start);
+
+    debug(JSON.stringify({
+      status: res.status,
+      ok: res.ok,
+      contentType: contentType,
+      responseTime: elapsed + " ms",
+      response: (json !== null ? json : (raw || "(empty response)"))
+    }, null, 2));
+
+    if(!res.ok) {
+      let detail = "";
+      if(json && typeof json === "object") {
+        detail = json.message || json.error || json.detail || "";
+      } else {
+        detail = raw;
+      }
+
+      if(res.status === 400) {
+        throw new Error("HTTP 400" + (detail ? " - " + detail : " - Request ditolak server"));
+      }
+      if(res.status === 401) {
+        throw new Error("HTTP 401" + (detail ? " - " + detail : " - API Key tidak valid"));
+      }
+      if(res.status === 403) {
+        throw new Error("HTTP 403" + (detail ? " - " + detail : " - Request ditolak server"));
+      }
+      if(res.status === 429) {
+        throw new Error("HTTP 429" + (detail ? " - " + detail : " - Terlalu banyak request"));
+      }
+      throw new Error("HTTP " + res.status + (detail ? " - " + detail : ""));
+    }
+
+    let success = false;
+    let bypassed = "";
+
+    if(currentType === "sfl") {
+      success = !!(json && json.status);
+      bypassed = json && json.bypassed_url;
+    } else if(currentType === "adlink") {
+      success = !!(json && json.success);
+      bypassed = json && json.url;
+    } else if(currentType === "bicolink") {
+      success = !!(json && json.status);
+      bypassed = json && (json.result || json.url || json.bypassed_url);
+    } else if(currentType === "linkvertise") {
+      success = !!(json && json.status);
+      bypassed = json && json.bypassed_url;
+    } else if(currentType === "demon") {
+      // The former Delta endpoint is now presented as DemonBypass.
+      success = !!(json && json.status);
+      bypassed = json && (json.result || json.url || json.bypassed_url);
+    }
+
+    if(!success || !bypassed) {
+      const message = (json && typeof json === "object" &&
+        (json.error || json.message)) || "Request gagal";
+      throw new Error(message);
+    }
+
+    $("original").textContent =
+      (json && typeof json === "object" && (json.original_url || json.input_url)) || url;
+    $("bypassed").textContent = bypassed;
+    $("creator").textContent =
+      (json && typeof json === "object" && json.creator) || (currentType === "demon" ? "DemonBypass" : "-");
+    $("time").textContent =
+      (json && typeof json === "object" && json.execution_time_ms != null)
+        ? json.execution_time_ms + " ms"
+        : elapsed + " ms";
+
     resultLink = bypassed;
     $("result").style.display = "block";
     toast("Bypass berhasil");
   } catch(err) {
-    debug(JSON.stringify({error:String(err), message:err.message}, null, 2));
+    debug(JSON.stringify({
+      error: String(err),
+      message: err.message
+    }, null, 2));
     toast(err.message || "Terjadi kesalahan");
   } finally {
     $("loader").style.display = "none";
   }
 }
-
 function updateDateTime() {
   const now = new Date();
 
